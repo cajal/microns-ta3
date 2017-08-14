@@ -1,27 +1,20 @@
-
 # coding: utf-8
-
-# In[1]:
 
 
 import datajoint as dj
-dj.config['database.host'] = 'datajoint.ninai.org'
-dj.config['database.user'] = 'dimitri'
-
-
-# In[2]:
-
-
-nda = dj.create_virtual_module('nda', 'microns_nda')
-
-
-# In[3]:
+dj.config['display.show_tuple_count'] = False
 
 
 schema = dj.schema('microns_ta3', locals())
+nda = dj.create_virtual_module('nda', 'microns_nda')
 
-
-# In[4]:
+@schema
+class Proofreader(dj.Lookup):
+    definition = """
+    # EM Segmentation proofreaders
+    proofreader :  varchar(8)   # short name 
+    """
+    contents = zip(('Tommy', 'Nick'))
 
 
 @schema
@@ -34,9 +27,6 @@ class Segmentation(dj.Manual):
     """
 
 
-# In[5]:
-
-
 @schema
 class Segment(dj.Manual):
     definition = """
@@ -44,7 +34,7 @@ class Segment(dj.Manual):
     -> Segmentation
     segment_id : bigint   # segment id unique within each Segmentation
     ---
-    boss_vset_id         : bigint unsigned              # 
+    boss_vset_id=null    : bigint unsigned              # IARPA's BOSS storage if applicable
     key_point_x          : int                          # (um) 
     key_point_y          : int                          # (um)
     key_point_z          : int                          # (um)
@@ -57,7 +47,37 @@ class Segment(dj.Manual):
     """
 
 
-# In[6]:
+@schema
+class Proofread(dj.Manual):
+    definition = """  # 
+    -> Segment
+    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    ---
+    -> Proofreader
+    verdict  : enum('valid', 'deprecated', 'ambiguous') 
+    proofread_comment=""  : varchar(4000) 
+    """
+
+@schema
+class AnnotationLookup(dj.Lookup):
+    definition = """  # list of possible annotations
+    annotation : varchar(255)
+    """
+    contents = zip(('spiny', 'sparsely spiny', 'aspiny', 'basket', 
+                    'Martinotti', 'bipolar', 'neurogliaform', 'chandelier', 
+                    'axon', 'dendrite', 'glia', 'vessel', 'astrocyte'))
+    
+
+@schema
+class Annotation(dj.Manual):
+    definition = """
+    -> Segment
+    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    ---
+    -> Proofreader
+    -> AnnotationLookup
+    annotation_comment  : varchar(4000) 
+    """
 
 
 @schema
@@ -86,15 +106,12 @@ class Mesh(dj.Manual):
         """
 
 
-# In[7]:
-
-
 @schema 
 class Synapse(dj.Manual):
     definition = """
     # Anatomically localized synapse between two Segments
     -> Segmentation
-    synapse_index        : int                     # synapse index within the segmentation
+    synapse_id        : bigint                     # synapse index within the segmentation
     ---
     (presyn) -> Segment
     (postsyn) -> Segment
@@ -104,8 +121,36 @@ class Synapse(dj.Manual):
     """
 
 
-# In[8]:
+@schema
+class SynapseProofread(dj.Manual):
+    definition = """  # 
+    -> Synapse
+    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    ---
+    -> Proofreader
+    verdict  : enum('valid', 'deprecated', 'ambiguous') 
+    proofread_comment=""  : varchar(4000) 
+    """
 
+
+@schema
+class SynapseAnnotationLookup(dj.Lookup):
+    definition = """  # list of possible annotations
+    annotation : varchar(255)
+    """
+    contents = zip(('symmetric', 'asymmetric', 'ambiguous'))
+
+
+@schema
+class SynapseAnnotation(dj.Manual):
+    definition = """
+    -> Synapse
+    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    ---
+    -> Proofreader
+    -> SynapseAnnotationLookup
+    annotation_comment  : varchar(4000) 
+    """
 
 
 @schema
@@ -118,26 +163,6 @@ class Soma(dj.Manual):
     """
 
 
-# In[9]:
-
-
-@schema
-class Classification(dj.Lookup):
-    definition = """
-    # all possible cell types
-    celltype : varchar(8)   # short name of cell type
-    ---
-    celltype_description : varchar(255)  # detailed description of cell type
-    """
-
-@schema 
-class Class(dj.Manual):
-    definition = """
-    # Cell classification
-    -> Segment
-    -> Classification
-    """
-    
 @schema
 class Neurite(dj.Manual):
     definition = """
@@ -146,35 +171,3 @@ class Neurite(dj.Manual):
     ---
     -> nda.Mask
     """
-
-
-# In[10]:
-
-
-@schema
-class ChangeLog(dj.Manual):
-    definition = """
-    log_entry    : serial 
-    ---
-    change_date  : date 
-    -> Segmentation
-    """
-
-
-# In[11]:
-
-
-dj.ERD(ta3) + dj.ERD(nda)
-
-
-# In[ ]:
-
-
-nda.Soma()
-
-
-# In[ ]:
-
-
-
-
