@@ -1,9 +1,11 @@
 # coding: utf-8
 
-
+import subprocess
+import json
+import time
+import os
 import datajoint as dj
-dj.config['display.show_tuple_count'] = False
-
+import numpy as np
 
 schema = dj.schema('microns_ta3', locals())
 nda = dj.create_virtual_module('nda', 'microns_nda')
@@ -12,7 +14,7 @@ nda = dj.create_virtual_module('nda', 'microns_nda')
 class Proofreader(dj.Lookup):
     definition = """
     # EM Segmentation proofreaders
-    proofreader :  varchar(8)   # short name 
+    proofreader :  varchar(8)   # short name
     """
     contents = zip(('Tommy', 'Nick'))
 
@@ -23,7 +25,7 @@ class Segmentation(dj.Manual):
     # Segmentation iteration or snapshot
     segmentation  : smallint   # segmentation id
     ---
-    segmentation_description : varchar(4000)   #  free text description of the segmentation    
+    segmentation_description : varchar(4000)   #  free text description of the segmentation
     """
 
 
@@ -35,10 +37,10 @@ class Segment(dj.Manual):
     segment_id : bigint   # segment id unique within each Segmentation
     ---
     boss_vset_id=null    : bigint unsigned              # IARPA's BOSS storage if applicable
-    key_point_x          : int                          # (um) 
+    key_point_x          : int                          # (um)
     key_point_y          : int                          # (um)
     key_point_z          : int                          # (um)
-    x_min                : int                          # (um) bounding box 
+    x_min                : int                          # (um) bounding box
     y_min                : int                          # (um) bounding box
     z_min                : int                          # (um) bounding box
     x_max                : int                          # (um) bounding box
@@ -49,13 +51,13 @@ class Segment(dj.Manual):
 
 @schema
 class Proofread(dj.Manual):
-    definition = """  # 
+    definition = """  #
     -> Segment
-    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp
     ---
     -> Proofreader
-    verdict  : enum('valid', 'deprecated', 'ambiguous') 
-    proofread_comment=""  : varchar(4000) 
+    verdict  : enum('valid', 'deprecated', 'ambiguous')
+    proofread_comment=""  : varchar(4000)
     """
 
 @schema
@@ -63,50 +65,87 @@ class AnnotationLookup(dj.Lookup):
     definition = """  # list of possible annotations
     annotation : varchar(255)
     """
-    contents = zip(('spiny', 'sparsely spiny', 'aspiny', 'basket', 
-                    'Martinotti', 'bipolar', 'neurogliaform', 'chandelier', 
+    contents = zip(('spiny', 'sparsely spiny', 'aspiny', 'basket',
+                    'Martinotti', 'bipolar', 'neurogliaform', 'chandelier',
                     'axon', 'dendrite', 'glia', 'vessel', 'astrocyte'))
-    
+
 
 @schema
 class Annotation(dj.Manual):
     definition = """
     -> Segment
-    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp
     ---
     -> Proofreader
     -> AnnotationLookup
-    annotation_comment  : varchar(4000) 
+    annotation_comment  : varchar(4000)
     """
+
 
 
 @schema
-class Mesh(dj.Manual):
+class Mesh(dj.Imported):
+
+    path = 'gs://pinky_share/pinky40_v11/watershed_mst_trimmed_sem_remap/mesh_mip_3_err_40'
+
     definition = """
-    # Trimesh of Segment
     -> Segment
     """
-    
+
     class Fragment(dj.Part):
-        definition = """
-        # Mesh Fragment
+        definition = """ # Mesh Fragment
         -> Mesh
-        fragment             : smallint                     # fragment in mesh
-        ---
-        bound_x_min          : int                          # 
-        bound_x_max          : int                          # 
-        bound_y_min          : int                          # 
-        bound_y_max          : int                          # 
-        bound_z_min          : int                          # 
-        bound_z_max          : int                          # 
-        n_vertices           : int                          # number of vertices in this mesh
-        n_triangles          : int                          # number of triangles in this mesh
-        vertices             : longblob                     # x,y,z coordinates of vertices
-        triangles            : longblob                     # triangles (triplets of vertices)
+        fragment  : smallint   # fragment in mesh
+        ----
+        bound_x_min   : int
+        bound_x_max   : int
+        bound_y_min   : int
+        bound_y_max   : int
+        bound_z_min   : int
+        bound_z_max   : int
+        n_vertices  :  int     # number of vertices in this mesh
+        n_triangles :  int     # number of triangles in this mesh
+        vertices    :  longblob  # x,y,z coordinates of vertices
+        triangles   :  longblob  # triangles (triplets of vertices)
         """
 
+    def _make_tuples(self, key):
 
-@schema 
+        def generate_fragments(manifest, key):
+            for fragment, fname in enumerate(manifest['fragments']):
+                boss_id, n, coords = fname.split(':')
+                subprocess.run(['gsutil', 'cp', '%s/%s' % (Mesh.path, fname), 'data'], stdout=subprocess.PIPE)
+                with open(os.path.join('data', fname), 'br') as f:
+                    buffer = f.read()
+                num_vertices = np.frombuffer(buffer[:4], dtype='uint32')[0]
+                buffer = buffer[4:]
+                vertices = np.frombuffer(buffer[:12*num_vertices], dtype='float32').reshape((num_vertices, 3))
+                buffer = buffer[12*num_vertices:]
+                num_triangles = len(buffer)//12
+                triangles = np.frombuffer(buffer, dtype='uint32').reshape((num_triangles, 3))
+                assert triangles.max() < 0xFFFF
+                triangles = triangles.astype('uint16')
+                bounds = list(map(int, coords.replace('_','-').split('-')))
+                yield dict(key,
+                           fragment=fragment,
+                           bound_x_min=bounds[0],
+                           bound_x_max=bounds[1],
+                           bound_y_min=bounds[2],
+                           bound_y_max=bounds[3],
+                           bound_z_min=bounds[4],
+                           bound_z_max=bounds[5],
+                           n_vertices=num_vertices,
+                           n_triangles=num_triangles,
+                           vertices=vertices,
+                           triangles=triangles)
+
+        result = subprocess.run(['gsutil', 'cat', '%s/%d:0' % (Mesh.path, key['segment_id'])], stdout=subprocess.PIPE)
+        manifest = json.loads(result.stdout)
+        self.insert1(key)
+        Mesh.Fragment().insert(generate_fragments(manifest, key))
+
+
+@schema
 class Synapse(dj.Manual):
     definition = """
     # Anatomically localized synapse between two Segments
@@ -115,21 +154,21 @@ class Synapse(dj.Manual):
     ---
     (presyn) -> Segment
     (postsyn) -> Segment
-    synapse_x            : float                        # 
-    synapse_y            : float                        # 
-    synapse_z            : float                        
+    synapse_x            : float                        #
+    synapse_y            : float                        #
+    synapse_z            : float
     """
 
 
 @schema
 class SynapseProofread(dj.Manual):
-    definition = """  # 
+    definition = """  #
     -> Synapse
-    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp
     ---
     -> Proofreader
-    verdict  : enum('valid', 'deprecated', 'ambiguous') 
-    proofread_comment=""  : varchar(4000) 
+    verdict  : enum('valid', 'deprecated', 'ambiguous')
+    proofread_comment=""  : varchar(4000)
     """
 
 
@@ -145,11 +184,11 @@ class SynapseAnnotationLookup(dj.Lookup):
 class SynapseAnnotation(dj.Manual):
     definition = """
     -> Synapse
-    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp  
+    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp
     ---
     -> Proofreader
     -> SynapseAnnotationLookup
-    annotation_comment  : varchar(4000) 
+    annotation_comment  : varchar(4000)
     """
 
 
@@ -167,7 +206,7 @@ class Soma(dj.Manual):
 class Neurite(dj.Manual):
     definition = """
     # orphaned axon or dendrite
-    -> Segment    
+    -> Segment
     ---
     -> nda.Mask
     """
