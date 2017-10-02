@@ -37,15 +37,6 @@ class Segment(dj.Manual):
     segment_id : bigint   # segment id unique within each Segmentation
     ---
     boss_vset_id=null    : bigint unsigned              # IARPA's BOSS storage if applicable
-    key_point_x          : int                          # (um)
-    key_point_y          : int                          # (um)
-    key_point_z          : int                          # (um)
-    x_min                : int                          # (um) bounding box
-    y_min                : int                          # (um) bounding box
-    z_min                : int                          # (um) bounding box
-    x_max                : int                          # (um) bounding box
-    y_max                : int                          # (um) bounding box
-    z_max                : int                          # (um) bounding box
     """
 
 
@@ -154,9 +145,15 @@ class Synapse(dj.Manual):
     ---
     (presyn) -> Segment
     (postsyn) -> Segment
-    synapse_x            : float                        #
-    synapse_y            : float                        #
-    synapse_z            : float
+    synapse_x            : bigint    # (EM voxels)
+    synapse_y            : bigint    # (EM voxels)
+    synapse_z            : bigint    # (EM voxels)
+    syn_bbox_x1          : bigint    # (EM voxels)  - bounding box
+    syn_bbox_y1          : bigint    # (EM voxels)  - bounding box
+    syn_bbox_z1          : bigint    # (EM voxels)  - bounding box
+    syn_bbox_x2          : bigint    # (EM voxels)  - bounding box
+    syn_bbox_y2          : bigint    # (EM voxels)  - bounding box
+    syn_bbox_z2          : bigint    # (EM voxels)  - bounding box
     """
 
 
