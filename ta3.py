@@ -7,7 +7,7 @@ import os
 import datajoint as dj
 import numpy as np
 
-schema = dj.schema('microns_ta3', locals())
+schema = dj.schema('microns_ta3', create_tables=False)
 nda = dj.create_virtual_module('nda', 'microns_nda')
 
 @schema
@@ -100,7 +100,7 @@ class Mesh(dj.Imported):
         triangles   :  longblob  # triangles (triplets of vertices)
         """
 
-    def _make_tuples(self, key):
+    def make(self, key):
 
         def generate_fragments(manifest, key):
             for fragment, fname in enumerate(manifest['fragments']):
@@ -110,12 +110,16 @@ class Mesh(dj.Imported):
                     buffer = f.read()
                 num_vertices = np.frombuffer(buffer[:4], dtype='uint32')[0]
                 buffer = buffer[4:]
+                if len(buffer) % 4:
+                    raise ValueError('Buffer size %d is not a muliple of 4' % len(buffer))
+                if len(buffer) < 12 * num_vertices:
+                    raise ValueError('Buffer is to short: %d for %d verticies' % (len(buffer), num_vertices))
                 vertices = np.frombuffer(buffer[:12*num_vertices], dtype='float32').reshape((num_vertices, 3))
                 buffer = buffer[12*num_vertices:]
                 num_triangles = len(buffer)//12
+                if len(buffer) < 12 * num_triangles:
+                    raise ValueError('Buffer is too short: %d for %d triangles' % (len(buffer), num_triangles))
                 triangles = np.frombuffer(buffer, dtype='uint32').reshape((num_triangles, 3))
-                assert triangles.max() < 0xFFFF
-                triangles = triangles.astype('uint16')
                 bounds = list(map(int, coords.replace('_','-').split('-')))
                 yield dict(key,
                            fragment=fragment,
