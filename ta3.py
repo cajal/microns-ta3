@@ -5,7 +5,7 @@ import os
 import datajoint as dj
 import numpy as np
 
-schema = dj.schema('dimitri_microns_ta3', create_tables=True)
+schema = dj.schema('microns_ta3', create_tables=False)
 nda = dj.create_virtual_module('nda', 'microns_nda')
 
 @schema
