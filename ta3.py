@@ -1,5 +1,3 @@
-# coding: utf-8
-
 import subprocess
 import json
 import time
@@ -7,7 +5,7 @@ import os
 import datajoint as dj
 import numpy as np
 
-schema = dj.schema('microns_ta3', create_tables=False)
+schema = dj.schema('dimitri_microns_ta3', create_tables=True)
 nda = dj.create_virtual_module('nda', 'microns_nda')
 
 @schema
@@ -16,7 +14,7 @@ class Proofreader(dj.Lookup):
     # EM Segmentation proofreaders
     proofreader :  varchar(8)   # short name
     """
-    contents = zip(('Tommy', 'Nick'))
+    contents = zip(('Alyssa', 'Nick', 'Tommy'))
 
 
 @schema
@@ -30,31 +28,57 @@ class Segmentation(dj.Manual):
 
 
 @schema
+class Revision(dj.Manual):
+    definition = """
+    # Segmentation revision session
+    -> Segmentation
+    revision  : smallint   # revision session number within Segmentation
+    ----
+    -> Proofreader
+    revision_comment = "" : varchar(1000)
+    revision_ts = CURRENT_TIMESTAMP : timestamp   # automatic
+    """
+
+
+@schema
 class Segment(dj.Manual):
     definition = """
-    # Segment: a volumetric segmented object
+    # Segment: volumetric segmented object - either active or retired
     -> Segmentation
-    segment_id : bigint   # segment id unique within each Segmentation
+    segment_id : bigint   # segment id unique within each Segmentation, same as Agglomeration ID in Neuroglancer
     ---
-    boss_vset_id=null    : bigint unsigned              # IARPA's BOSS storage if applicable
+    -> Revision
     """
+
+    class Retired(dj.Part):
+        definition = """
+        # Segment discarded after a split, merge, or delete
+        -> master
+        """
+
+    class Precursor(dj.Part):
+        definition = """
+        # Retired segment that was split or merged to give rise to this segment
+        -> master
+        (precursor) -> Segment.Retired(segment_id)
+        """
 
 
 @schema
-class Proofread(dj.Manual):
+class Inspect(dj.Manual):
     definition = """  #
     -> Segment
-    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp
     ---
     -> Proofreader
-    verdict  : enum('valid', 'deprecated', 'ambiguous')
-    proofread_comment=""  : varchar(4000)
+    verdict    : enum('valid', 'suspect', 'invalid', 'ambiguous')
+    inspect_ts = CURRENT_TIMESTAMP  : timestamp   # automtic
     """
 
+
 @schema
-class AnnotationLookup(dj.Lookup):
+class SegmentLabel(dj.Lookup):
     definition = """  # list of possible annotations
-    annotation : varchar(255)
+    segment_label : varchar(255)
     """
     contents = zip(('spiny', 'sparsely spiny', 'aspiny', 'basket',
                     'Martinotti', 'bipolar', 'neurogliaform', 'chandelier',
@@ -62,14 +86,15 @@ class AnnotationLookup(dj.Lookup):
 
 
 @schema
-class Annotation(dj.Manual):
+class SegmentAnnotation(dj.Manual):
     definition = """
     -> Segment
-    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp
+    seg_annot_id  : smallint
     ---
     -> Proofreader
-    -> AnnotationLookup
-    annotation_comment  : varchar(4000)
+    -> SegmentLabel
+    segment_comment  : varchar(4000)
+    segment_annotation_ts = CURRENT_TIMESTAMP  : timestamp
     """
 
 
@@ -162,21 +187,9 @@ class Synapse(dj.Manual):
 
 
 @schema
-class SynapseProofread(dj.Manual):
-    definition = """  #
-    -> Synapse
-    proofread_timestamp = CURRENT_TIMESTAMP  : timestamp
-    ---
-    -> Proofreader
-    verdict  : enum('valid', 'deprecated', 'ambiguous')
-    proofread_comment=""  : varchar(4000)
-    """
-
-
-@schema
-class SynapseAnnotationLookup(dj.Lookup):
+class SynapseLabel(dj.Lookup):
     definition = """  # list of possible annotations
-    annotation : varchar(255)
+    synapse_label : varchar(255)
     """
     contents = zip(('symmetric', 'asymmetric', 'ambiguous'))
 
@@ -185,11 +198,12 @@ class SynapseAnnotationLookup(dj.Lookup):
 class SynapseAnnotation(dj.Manual):
     definition = """
     -> Synapse
-    annotation_timestamp = CURRENT_TIMESTAMP  : timestamp
+    syn_annot_id  :  smallint
     ---
     -> Proofreader
-    -> SynapseAnnotationLookup
-    annotation_comment  : varchar(4000)
+    -> SynapseLabel
+    synapse_comment  : varchar(4000)
+    synapse_annotation_ts = CURRENT_TIMESTAMP  : timestamp
     """
 
 
